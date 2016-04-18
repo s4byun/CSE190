@@ -9,6 +9,9 @@ from cse_190_assi_1.msg import temperatureMessage, RobotProbabilities
 from cse_190_assi_1.srv import requestMapData, moveService, requestTexture
 from read_config import read_config
 
+def norm(mu, sigma, x):
+    return (1./(sigma*sqrt(2*pi)))*exp(-(x-mu)**2/(2*sigma**2))
+
 class Robot():
 
     def __init__(self):
@@ -53,7 +56,7 @@ class Robot():
         self.activation_pub = rospy.Publisher(
                 "/temp_sensor/activation",
                 Bool,
-                queue_size = 10
+                queue_size = 1
         )
         self.temperature_pub = rospy.Publisher(
                 "/results/temperature_data",
@@ -84,31 +87,41 @@ class Robot():
         )
 
     def handle_temperature_data(self, message):
-        print message
         texture_requester = \
                 rospy.ServiceProxy('requestTexture', requestTexture)
         move_requester    = \
                 rospy.ServiceProxy('moveService', moveService)
+
         tex = texture_requester()
-        print tex
+
+        print "temp:\t", message.temperature
+        print "tex :\t", tex.data
+
         self.texture_pub.publish(tex.data)
         self.temperature_pub.publish(message.temperature)
+
         self.discrete_bayes_filter(0, tex.data)
         self.discrete_bayes_filter(1, message.temperature)
+
         if self.move_num == self.move_max:
             self.probabilities_pub.publish(self.belief)
+            print "move:\tnone"
+            print self.belief, "\n"
             self.sim_complete.publish(True)
             rospy.sleep(1)
             rospy.signal_shutdown("Done.")
-        self.discrete_bayes_filter(2, self.move_list[self.move_num])
-        self.probabilities_pub.publish(self.belief)
-        move_requester(self.move_list[self.move_num])
-        self.move_num += 1
-        rospy.sleep(1)
+        else:
+            self.discrete_bayes_filter(2, self.move_list[self.move_num])
+            self.probabilities_pub.publish(self.belief)
+            print "move:\t", self.move_list[self.move_num]
+            print self.belief, "\n"
+            move_requester(self.move_list[self.move_num])
+            self.move_num += 1
+            rospy.sleep(1)
 
     def activate_temperature(self, isActive):
         self.activation_pub.publish(isActive)
-        rospy.spin()
+        rospy.sleep(1)
 
     def discrete_bayes_filter(self, t, z):
         if   t == 0:
@@ -129,18 +142,15 @@ class Robot():
         normalizer = np.sum(self.belief)
         self.belief /= normalizer
 
-    def norm(self, mu, sigma, x):
-        return (1./(sigma*sqrt(2*pi)))*exp(-(x-mu)**2/(2*sigma**2))
-
     def perceptual_temp(self, z):
         for i in range(self.grid_size):
             normalizer = 0.
-            pdf = self.norm(self.temp_dict[self.pipe_map[i]], \
+            pdf = norm(self.temp_dict[self.pipe_map[i]], \
                     self.temp_std_dev, z)
-            normalizer = self.norm(self.temp_dict["-"], \
+            normalizer = norm(self.temp_dict["-"], \
                     self.temp_std_dev, z) + \
-                    self.norm(self.temp_dict["C"], self.temp_std_dev, z) + \
-                    self.norm(self.temp_dict["H"], self.temp_std_dev, z)
+                    norm(self.temp_dict["C"], self.temp_std_dev, z) + \
+                    norm(self.temp_dict["H"], self.temp_std_dev, z)
 
             self.belief[i] *= pdf / normalizer
 
@@ -180,5 +190,6 @@ class Robot():
 
 if __name__ == '__main__':
     robot = Robot()
-    rospy.sleep(2)
+    rospy.sleep(1)
     robot.activate_temperature(True)
+    rospy.spin()
