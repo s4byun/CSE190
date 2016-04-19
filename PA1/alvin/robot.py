@@ -110,6 +110,7 @@ class Robot():
             self.probabilities_pub.publish(self.belief)
             print "move:\tnone"
             print self.belief, "\n"
+            self.activate_temperature(False)
             self.sim_complete.publish(True)
             rospy.sleep(1)
             rospy.signal_shutdown("Done.")
