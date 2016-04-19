@@ -19,6 +19,7 @@ class Robot():
         self.bootstrap()
         self.subscribe()
         self.publish()
+        self.service()
 
     def bootstrap(self):
         self.config      = read_config()
@@ -51,6 +52,12 @@ class Robot():
         self.move_max            = len(self.move_list)
 
         self.belief              = np.full(self.grid_size, 1./self.grid_size)
+
+    def service(self):
+        self.texture_requester = \
+                rospy.ServiceProxy('requestTexture', requestTexture)
+        self.move_requester    = \
+                rospy.ServiceProxy('moveService', moveService)
 
     def publish(self):
         self.activation_pub = rospy.Publisher(
@@ -87,12 +94,8 @@ class Robot():
         )
 
     def handle_temperature_data(self, message):
-        texture_requester = \
-                rospy.ServiceProxy('requestTexture', requestTexture)
-        move_requester    = \
-                rospy.ServiceProxy('moveService', moveService)
 
-        tex = texture_requester()
+        tex = self.texture_requester()
 
         print "temp:\t", message.temperature
         print "tex :\t", tex.data
@@ -115,7 +118,7 @@ class Robot():
             self.probabilities_pub.publish(self.belief)
             print "move:\t", self.move_list[self.move_num]
             print self.belief, "\n"
-            move_requester(self.move_list[self.move_num])
+            self.move_requester(self.move_list[self.move_num])
             self.move_num += 1
 
     def activate_temperature(self, isActive):
