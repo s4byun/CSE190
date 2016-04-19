@@ -117,11 +117,9 @@ class Robot():
             print self.belief, "\n"
             move_requester(self.move_list[self.move_num])
             self.move_num += 1
-            rospy.sleep(1)
 
     def activate_temperature(self, isActive):
         self.activation_pub.publish(isActive)
-        rospy.sleep(1)
 
     def discrete_bayes_filter(self, t, z):
         if   t == 0:
