@@ -53,7 +53,8 @@ class Robot():
         for x in xrange(self.width):
             for y in xrange(self.height):
                 dist, index = kdt.query([x,y], k = 1)
-                self.map.set_cell(x, y, self.normpdf(0, self.config["laser_sigma_hit"], dist[0])) 
+                val = self.normpdf(0, self.config["laser_sigma_hit"], dist[0])
+                self.map.set_cell(x, y, val)
         
         self.likelihood_pub.publish(self.map.to_message())
 
@@ -66,7 +67,7 @@ class Robot():
         for i in xrange(self.size):
             x = r.randint(0,self.width)
             y = r.randint(0,self.height)
-            t = r.random()*m.pi*2
+            t = r.random()*2*m.pi 
             w = 1./self.size
             poses.append(hf.get_pose(x,y,t))
             self.particles.append(Particle(x,y,t,w))
@@ -88,25 +89,26 @@ class Robot():
         n = move_list[2]
         hf.move_function(a, 0)
         p = self.particles
-        poses = []
+
         for i in xrange(self.size):
-            p[i].theta += a + r.gauss(0, sdt) 
+            p[i].theta += r.gauss(a, sdt) 
             if(p[i].theta >= 2*m.pi):
                 p[i].theta -= 2*m.pi
             elif(p[i].theta < 0):
                 p[i].theta += 2*m.pi
 
-        for _ in xrange(n):
+        for step in xrange(n):
             hf.move_function(0,d)
+            poses = []
             for i in xrange(self.size):
                 dx = d*m.cos(p[i].theta)+r.gauss(0,sdx)
                 dy = d*m.sin(p[i].theta)+r.gauss(0,sdy)
                 p[i].x += dx
                 p[i].y += dy
                 poses.append(hf.get_pose(p[i].x, p[i].y, p[i].theta))
-
+            self.update_pose_and_publish(poses)
+                    
         self.particles = p 
-        self.update_pose_and_publish(poses)
         self.num_moves += 1
         self.moved = True
     
@@ -124,22 +126,26 @@ class Robot():
             total_weight = 0.0
             for i in xrange(self.size):
                 Ptot = 0.0
-                for d in resp.ranges:
-                    x = p[i].x + d*m.cos(p[i].theta)
-                    y = p[i].y + d*m.sin(p[i].theta)
-                    Lp = self.map.get_cell(x,y)
-                    pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
-                    Ptot += pz*pz
+                coord = self.map.get_cell(p[i].x, p[i].y)
+                if(coord == 1.0 or coord != coord):
+                    p[i].weight = 0.0
+                else:
+                    for d in resp.ranges:
+                        x = p[i].x + d*m.cos(p[i].theta)
+                        y = p[i].y + d*m.sin(p[i].theta)
+                        Lp = self.map.get_cell(x,y)
+                        pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
+                        Ptot *= pz
 
-                p[i].weight *= Ptot
-                total_weight += p[i].weight
+                    p[i].weight *= Ptot
+                    total_weight += p[i].weight
 
             p_accumulator = 0.0
             wheel = []
             for i in xrange(self.size):
-                wheel.append(p_accumulator)
                 p[i].weight /= total_weight
                 p_accumulator += p[i].weight
+                wheel.append(p_accumulator)
 
             self.particles = p
             self.resample(wheel)
@@ -151,7 +157,7 @@ class Robot():
         for i in xrange(self.size):
             picker = r.random()
             for j in xrange(self.size):
-                if picker >= wheel[j]:
+                if wheel[j] >= picker:
                     self.particles[i] = p[j]
                     poses.append(hf.get_pose(p[j].x, p[j].y, p[j].theta))
                     break
@@ -168,15 +174,11 @@ class Robot():
         self.initialize_particles()
         self.move()
        
-        
     def normpdf(self, mean, sd, x):
         var = float(sd)**2
         denom = (2*m.pi*var)**.5
         num = m.exp(-(float(x)-float(mean))**2/(2*var))
-        return num  #/denom
-
-        
-        
+        return num
 
 if __name__ == '__main__':
     rb = Robot()
