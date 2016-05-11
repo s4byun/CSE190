@@ -61,31 +61,36 @@ class Robot():
     def initialize_particles(self):
         self.size = self.config["num_particles"]
         self.particles = [] 
-        self.pose_array = PoseArray() 
-        self.pose_array.header.stamp = rospy.Time.now()
-        self.pose_array.header.frame_id = 'map'
-        self.pose_array.poses = []
-
+        poses = []
+        
         for i in xrange(self.size):
             x = r.randint(0,self.width)
             y = r.randint(0,self.height)
             t = r.random()*m.pi*2
             w = 1./self.size
-            pose = hf.get_pose(x,y,t)
-            self.pose_array.poses.append(pose)
+            poses.append(hf.get_pose(x,y,t))
             self.particles.append(Particle(x,y,t,w))
 
-        self.particle_pub.publish(self.pose_array)
+        self.update_pose_and_publish(poses)
 
-    def first_move(self):
-        move_list = self.config["move_list"][0]
+    def move(self):
+        sdt = self.config["resample_sigma_angle"]
+        sdx = self.config["resample_sigma_x"]
+        sdy = self.config["resample_sigma_y"]
+        if(self.num_moves == 0):
+            sdt = self.config["first_move_sigma_angle"]
+            sdx = self.config["first_move_sigma_x"]
+            sdy = self.config["first_move_sigma_y"]
+
+        move_list = self.config["move_list"][self.num_moves]
         a = move_list[0] * m.pi / 180.0
         d = move_list[1]
         n = move_list[2]
         hf.move_function(a, 0)
         p = self.particles
+        poses = []
         for i in xrange(self.size):
-            p[i].theta += a + r.gauss(0, self.config["first_move_sigma_angle"])
+            p[i].theta += a + r.gauss(0, sdt) 
             if(p[i].theta >= 2*m.pi):
                 p[i].theta -= 2*m.pi
             elif(p[i].theta < 0):
@@ -94,21 +99,64 @@ class Robot():
         for _ in xrange(n):
             hf.move_function(0,d)
             for i in xrange(self.size):
-                dx = d*m.cos(p[i].theta)+r.gauss(0,self.config["first_move_sigma_x"])
-                dy = d*m.sin(p[i].theta)+r.gauss(0,self.config["first_move_sigma_y"])
+                dx = d*m.cos(p[i].theta)+r.gauss(0,sdx)
+                dy = d*m.sin(p[i].theta)+r.gauss(0,sdy)
                 p[i].x += dx
                 p[i].y += dy
-                self.pose_array.poses[i] = hf.get_pose(p[i].x, p[i].y, p[i].theta)
+                poses.append(hf.get_pose(p[i].x, p[i].y, p[i].theta))
 
         self.particles = p 
-        self.particle_pub.publish(self.pose_array)
-        self.moved = True
+        self.update_pose_and_publish(poses)
         self.num_moves += 1
+        self.moved = True
     
+    def update_pose_and_publish(self,poses):
+        pose_array = PoseArray() 
+        pose_array.header.stamp = rospy.Time.now()
+        pose_array.header.frame_id = 'map'
+        pose_array.poses = poses 
+        self.particle_pub.publish(pose_array)
+
     def handle_scan(self, resp):
         if self.moved == True:
             self.moved = False
+            p = self.particles
+            total_weight = 0.0
+            for i in xrange(self.size):
+                Ptot = 0.0
+                for d in resp.ranges:
+                    x = p[i].x + d*m.cos(p[i].theta)
+                    y = p[i].y + d*m.sin(p[i].theta)
+                    Lp = self.map.get_cell(x,y)
+                    pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
+                    Ptot += pz*pz
 
+                p[i].weight *= Ptot
+                total_weight += p[i].weight
+
+            p_accumulator = 0.0
+            wheel = []
+            for i in xrange(self.size):
+                wheel.append(p_accumulator)
+                p[i].weight /= total_weight
+                p_accumulator += p[i].weight
+
+            self.particles = p
+            self.resample(wheel)
+            self.move()
+
+    def resample(self, wheel):
+        p = self.particles
+        poses = []
+        for i in xrange(self.size):
+            picker = r.random()
+            for j in xrange(self.size):
+                if picker >= wheel[j]:
+                    self.particles[i] = p[j]
+                    poses.append(hf.get_pose(p[j].x, p[j].y, p[j].theta))
+                    break
+
+        self.update_pose_and_publish(poses)
 
     def handle_mapserver(self, resp):
         self.map = Map(resp)
@@ -118,7 +166,7 @@ class Robot():
 
         self.update_likelihood()
         self.initialize_particles()
-        self.first_move()
+        self.move()
        
         
     def normpdf(self, mean, sd, x):
