@@ -41,6 +41,7 @@ class Robot():
         rospy.Subscriber("base_scan_with_error", LaserScan, self.handle_scan)
         self.particle_pub = rospy.Publisher("/particlecloud", PoseArray, queue_size = 10)
         self.likelihood_pub = rospy.Publisher("/likelihood_field", OccupancyGrid, queue_size = 10, latch = True)
+        self.result_update = rospy.Publisher("/result_update", Bool, queue_size = 1)
         self.sim_complete = rospy.Publisher("/sim_complete", Bool, queue_size = 1)
 
 
@@ -117,6 +118,7 @@ class Robot():
                     continue
 
             self.num_moves += 1
+            self.result_update.publish(True)
 
         self.sim_complete.publish(True)
         rospy.sleep(1)
