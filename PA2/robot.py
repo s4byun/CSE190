@@ -9,6 +9,7 @@ import helper_functions as hf
 import copy
 from read_config import read_config
 
+from std_msgs.msg import Bool
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseArray, Twist
@@ -36,11 +37,12 @@ class Robot():
         rospy.spin()
 
     def bootstrap(self):
-        rospy.Subscriber("/map", OccupancyGrid, self.handle_mapserver) 
+        rospy.Subscriber("/map", OccupancyGrid, self.handle_mapserver)
         rospy.Subscriber("base_scan_with_error", LaserScan, self.handle_scan)
         self.particle_pub = rospy.Publisher("/particlecloud", PoseArray, queue_size = 10)
-        self.likelihood_pub = rospy.Publisher("/likelihood_field", OccupancyGrid, queue_size = 10, latch = True) 
-        
+        self.likelihood_pub = rospy.Publisher("/likelihood_field", OccupancyGrid, queue_size = 10, latch = True)
+        self.sim_complete = rospy.Publisher("/sim_complete", Bool, queue_size = 1)
+
 
     def update_likelihood(self):
         obstacle_loc = []
@@ -56,19 +58,19 @@ class Robot():
                 dist, index = self.kdt.query([x,y], k = 1)
                 val = self.normpdf(0, self.config["laser_sigma_hit"], dist[0])
                 self.likelihood_map.set_cell(x, y, val)
-        
+
         self.likelihood_pub.publish(self.likelihood_map.to_message())
 
 
     def initialize_particles(self):
         self.size = self.config["num_particles"]
-        self.particles = [] 
+        self.particles = []
         poses = []
-        
+
         for i in xrange(self.size):
             x = r.randint(0,self.width)
             y = r.randint(0,self.height)
-            t = r.random()*2*m.pi 
+            t = r.random()*2*m.pi
 
             w = 1./self.size
             poses.append(hf.get_pose(x,y,t))
@@ -84,13 +86,13 @@ class Robot():
 
         while(self.num_moves < num_total_moves):
             move_list = self.config["move_list"][self.num_moves]
-            a = move_list[0] 
+            a = move_list[0]
             d = move_list[1]
             n = move_list[2]
             #self.rate.sleep()
             hf.move_function(a, 0)
             #self.rate.sleep()
-            a *= m.pi/180.0 
+            a *= m.pi/180.0
             a += r.gauss(0,sdt)
 
             for i in xrange(self.size):
@@ -113,14 +115,19 @@ class Robot():
                 self.moved = True
                 while(self.moved):
                     continue
-                        
+
             self.num_moves += 1
-    
+
+        self.sim_complete.publish(True)
+        rospy.sleep(1)
+        rospy.signal_shutdown("Done.")
+
+
     def publish_pose(self,poses):
-        pose_array = PoseArray() 
+        pose_array = PoseArray()
         pose_array.header.stamp = rospy.Time.now()
         pose_array.header.frame_id = 'map'
-        pose_array.poses = poses 
+        pose_array.poses = poses
         self.particle_pub.publish(pose_array)
 
     def handle_scan(self, resp):
@@ -195,7 +202,7 @@ class Robot():
         self.update_likelihood()
         self.initialize_particles()
         self.move()
-       
+
     def normpdf(self, mean, sd, x):
         var = float(sd)**2
         return m.exp(-(float(x)-float(mean))**2/(2*var))
