@@ -159,7 +159,7 @@ class Robot():
 
 
                         Lp = self.likelihood_map.get_cell(x,y)
-                        if(Lp != Lp):#or Lp == 1.0):
+                        if(Lp != Lp or Lp == 1.0): #float('nan')):
                             pz = 0
                         else:
                             pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
@@ -220,5 +220,6 @@ class Robot():
 
     def sigmoid(self, p):
         return 1/(1+m.exp(-p))
+
 if __name__ == '__main__':
     rb = Robot()
