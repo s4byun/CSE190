@@ -49,15 +49,15 @@ class Robot():
                 if self.map.get_cell(x,y) == 1.0:
                     obstacle_loc.append([x,y])
 
-        kdt = KDTree(obstacle_loc)
+        self.kdt = KDTree(obstacle_loc)
 
         for x in xrange(self.width):
             for y in xrange(self.height):
-                dist, index = kdt.query([x,y], k = 1)
+                dist, index = self.kdt.query([x,y], k = 1)
                 val = self.normpdf(0, self.config["laser_sigma_hit"], dist[0])
-                self.map.set_cell(x, y, val)
+                self.likelihood_map.set_cell(x, y, val)
         
-        self.likelihood_pub.publish(self.map.to_message())
+        self.likelihood_pub.publish(self.likelihood_map.to_message())
 
 
     def initialize_particles(self):
@@ -68,8 +68,6 @@ class Robot():
         for i in xrange(self.size):
             x = r.randint(0,self.width)
             y = r.randint(0,self.height)
-#            x = 130
-#            y = 100
             t = r.random()*2*m.pi 
 
             w = 1./self.size
@@ -80,36 +78,38 @@ class Robot():
 
     def move(self):
         num_total_moves = len(self.config["move_list"])
-        while(self.num_moves < num_total_moves):
-            sdt = self.config["first_move_sigma_angle"]
-            sdx = self.config["first_move_sigma_x"]
-            sdy = self.config["first_move_sigma_y"]
+        sdt = self.config["first_move_sigma_angle"]
+        sdx = self.config["first_move_sigma_x"]
+        sdy = self.config["first_move_sigma_y"]
 
+        while(self.num_moves < num_total_moves):
             move_list = self.config["move_list"][self.num_moves]
-            a = move_list[0]
+            a = move_list[0] 
             d = move_list[1]
             n = move_list[2]
+            #self.rate.sleep()
             hf.move_function(a, 0)
+            #self.rate.sleep()
+            a *= m.pi/180.0 
+            a += r.gauss(0,sdt)
 
             for i in xrange(self.size):
-                self.particles[i].theta += a*m.pi/180.0 + r.gauss(0, sdt) 
-                if(self.particles[i].theta >= 2*m.pi):
-                    self.particles[i].theta -= 2*m.pi 
-                elif(self.particles[i].theta < 0):
-                    self.particles[i].theta += 2*m.pi
+                self.particles[i].theta += a
 
+            # Wait til laser scan update finishes
             self.moved = True
             while(self.moved):
-                continue 
+                continue
 
             for step in xrange(n):
                 hf.move_function(0,d)
-                poses = []
+                #self.rate.sleep()
                 for i in xrange(self.size):
-                    dx = d*m.cos(self.particles[i].theta)+r.gauss(0,sdx)
-                    dy = d*m.sin(self.particles[i].theta)+r.gauss(0,sdy)
+                    dx = d*m.cos(self.particles[i].theta) + r.gauss(0,sdx)
+                    dy = d*m.sin(self.particles[i].theta) + r.gauss(0,sdy)
                     self.particles[i].x += dx
                     self.particles[i].y += dy
+
                 self.moved = True
                 while(self.moved):
                     continue
@@ -128,42 +128,44 @@ class Robot():
             total_weight = 0.0
             for i in xrange(self.size):
                 coord = self.map.get_cell(self.particles[i].x, self.particles[i].y)
-                if(coord == 1.0 or coord != coord):
+                if(coord == 1.0 or coord != coord): #float('nan')):
                     self.particles[i].weight = 0.0
                 else:
-                    Ptot = 1.0
+                    Ptot = 0.0
                     inc = 0
                     for d in resp.ranges:
                         angle = resp.angle_min + inc * resp.angle_increment + self.particles[i].theta
                         inc += 1
                         x = self.particles[i].x + d*m.cos(angle)
                         y = self.particles[i].y + d*m.sin(angle)
-                        Lp = self.map.get_cell(x,y)
-                        if(Lp != Lp):
-                            Lp = 0.001
+                        Lp = self.likelihood_map.get_cell(x,y)
+                        if(Lp != Lp): #float('nan')):
+                            pz = 0
+                        else:
+                            pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
+                        Ptot += pz
 
-                        pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
-                        Ptot *= pz
+                    if Ptot == 0:
+                        self.particles[i].weight = 0.0
+                    else:
+                        self.particles[i].weight *= self.sigmoid(Ptot) + 0.01
+                        total_weight += self.particles[i].weight
 
-                    self.particles[i].weight *= Ptot
-                    total_weight += self.particles[i].weight
-
-            p_accumulator = 0.0
-            wheel = []
-            particles = []
-            counter = 0
-            for i in xrange(self.size):
-                self.particles[i].weight /= total_weight
-                p_accumulator += self.particles[i].weight
-                #wheel.append(p_accumulator)
-                if(self.particles[i].weight > 0.0):
-                    counter += 1
-                    particles.append(self.particles[i])
+            if(total_weight > 0):
+                wheel = []
+                particles = []
+                counter = 0
+                for i in xrange(self.size):
+                    self.particles[i].weight /= total_weight
+                    if(self.particles[i].weight > 0.0):
+                        counter += 1
                     wheel.append(self.particles[i].weight)
+                    particles.append(copy.deepcopy(self.particles[i]))
 
-            if(counter == 0):
-                print "NOTHING INSERTED TO WHEEL!!!!"
-            self.resample(particles, wheel)
+                print "COUNT = ", counter
+
+                self.resample(particles, wheel)
+
             self.moved = False
 
     def resample(self, particles, wheel):
@@ -171,30 +173,13 @@ class Robot():
         sdx = self.config['resample_sigma_x']
         sdy = self.config['resample_sigma_y']
         sdt = self.config['resample_sigma_angle']
-#        new_p = []
-        '''
-        for i in xrange(self.size):
-            picker = r.random()
-            for j in xrange(self.size):
-                if wheel[j] > picker:
-                    x = self.particles[j].x + r.gauss(0,sdx)
-                    y = self.particles[j].y + r.gauss(0,sdy)
-                    t = self.particles[j].theta + r.gauss(0,sdt)
-                    w = self.particles[j].weight
-                    new_p.append(Particle(x,y,t,w))
-                    poses.append(hf.get_pose(x,y,t))
-                    break
-        '''
-        
-        new_p = np.random.choice(particles, self.size, wheel)
-        #self.particles = list(new_p)
+        new_p = np.random.choice(particles, self.size, p = wheel)
+
         for i in xrange(self.size):
             self.particles[i].x = new_p[i].x + r.gauss(0,sdx)
             self.particles[i].y = new_p[i].y + r.gauss(0,sdy)
             self.particles[i].theta = new_p[i].theta + r.gauss(0,sdt)
             self.particles[i].weight = new_p[i].weight
-            if(new_p[i].weight == 0.0):
-                print "HAIOAOHOAHOHA"
 
             poses.append(hf.get_pose(self.particles[i].x,self.particles[i].y,self.particles[i].theta))
 
@@ -202,6 +187,7 @@ class Robot():
 
     def handle_mapserver(self, resp):
         self.map = Map(resp)
+        self.likelihood_map = Map(resp)
 
         self.width = self.map.width
         self.height = self.map.height
@@ -214,5 +200,7 @@ class Robot():
         var = float(sd)**2
         return m.exp(-(float(x)-float(mean))**2/(2*var))
 
+    def sigmoid(self, p):
+        return 1/(1+m.exp(-p))
 if __name__ == '__main__':
     rb = Robot()
