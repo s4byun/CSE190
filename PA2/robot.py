@@ -78,6 +78,7 @@ class Robot():
             self.particles.append(Particle(x,y,t,w))
 
         self.publish_pose(poses)
+        self.rate.sleep()
 
     def move(self):
         num_total_moves = len(self.config["move_list"])
@@ -87,14 +88,15 @@ class Robot():
 
         while(self.num_moves < num_total_moves):
             move_list = self.config["move_list"][self.num_moves]
+            self.result_update.publish(True)
             a = move_list[0]
             d = move_list[1]
             n = move_list[2]
             #self.rate.sleep()
             hf.move_function(a, 0)
-            #self.rate.sleep()
             a *= m.pi/180.0
-            a += r.gauss(0,sdt)
+            if self.num_moves == 0:
+                a += r.gauss(0,sdt)
 
             for i in xrange(self.size):
                 self.particles[i].theta += a
@@ -104,21 +106,26 @@ class Robot():
             while(self.moved):
                 continue
 
+            self.rate.sleep()
             for step in xrange(n):
                 hf.move_function(0,d)
-                #self.rate.sleep()
                 for i in xrange(self.size):
-                    dx = d*m.cos(self.particles[i].theta) + r.gauss(0,sdx)
-                    dy = d*m.sin(self.particles[i].theta) + r.gauss(0,sdy)
+                    if self.num_moves == 0:
+                        dx = d*m.cos(self.particles[i].theta) + r.gauss(0,sdx)
+                        dy = d*m.sin(self.particles[i].theta) + r.gauss(0,sdy)
+                    else:
+                        dx = d*m.cos(self.particles[i].theta)
+                        dy = d*m.sin(self.particles[i].theta)
+
                     self.particles[i].x += dx
                     self.particles[i].y += dy
 
                 self.moved = True
                 while(self.moved):
                     continue
+                self.rate.sleep()
 
             self.num_moves += 1
-            self.result_update.publish(True)
 
         self.sim_complete.publish(True)
         rospy.sleep(1)
@@ -143,12 +150,16 @@ class Robot():
                     Ptot = 0.0
                     inc = 0
                     for d in resp.ranges:
+                        if(d < resp.range_min or d > resp.range_max):
+                            continue
                         angle = resp.angle_min + inc * resp.angle_increment + self.particles[i].theta
                         inc += 1
                         x = self.particles[i].x + d*m.cos(angle)
                         y = self.particles[i].y + d*m.sin(angle)
+
+
                         Lp = self.likelihood_map.get_cell(x,y)
-                        if(Lp != Lp): #float('nan')):
+                        if(Lp != Lp):#or Lp == 1.0):
                             pz = 0
                         else:
                             pz = self.config["laser_z_hit"]*Lp + self.config["laser_z_rand"]
@@ -170,8 +181,6 @@ class Robot():
                         counter += 1
                     wheel.append(self.particles[i].weight)
                     particles.append(copy.deepcopy(self.particles[i]))
-
-                print "COUNT = ", counter
 
                 self.resample(particles, wheel)
 
@@ -201,8 +210,8 @@ class Robot():
         self.width = self.map.width
         self.height = self.map.height
 
-        self.update_likelihood()
         self.initialize_particles()
+        self.update_likelihood()
         self.move()
 
     def normpdf(self, mean, sd, x):
