@@ -6,6 +6,7 @@ import rospy
 import heapq
 
 from cse_190_assi_3.msg import AStarPath
+from copy import deepcopy
 
 from read_config import read_config
 
@@ -44,20 +45,19 @@ def solve():
     ############
     move_count = 0
     move_queue = []
-    result = []
-    heapq.heappush(move_queue, (0, 0, start))
+    prev_map = [[[-1,-1] for i in xrange(col_size)] for j in xrange(row_size)]
+    heapq.heappush(move_queue, (0, 0, start, []))
 
     while len(move_queue) > 0:
         move_set = heapq.heappop(move_queue)
         backward_cost = move_set[1] + 1
         cur_pos = move_set[2]
-        print cur_pos
+        path = deepcopy(move_set[3])
+        path.append(cur_pos)
         if(cur_pos == goal):
-            break
-
+            return path
         x = cur_pos[0]
         y = cur_pos[1]
-
         for move in move_list:
             new_x = x + move[0]
             new_y = y + move[1]
@@ -65,9 +65,8 @@ def solve():
                 continue
             if(forward_cost_map[new_x][new_y] == -1000):
                 continue
-            cost = forward_cost_map[new_x][new_y] + backward_cost 
-            heapq.heappush(move_queue, (cost, backward_cost, [new_x, new_y]))
+            cost = forward_cost_map[new_x][new_y] + backward_cost
+            prev_map[new_x][new_y] = cur_pos
+            heapq.heappush(move_queue, (cost, backward_cost, [new_x, new_y], path))
         
-        backward_cost += 1
-
-    return result
+    return [] 
